@@ -115,18 +115,33 @@ defmodule SymphonyElixir.Config do
   end
 
   defp validate_semantics(settings) do
+    case settings.tracker.kind do
+      nil -> {:error, :missing_tracker_kind}
+      "linear" -> validate_linear_tracker(settings.tracker)
+      "memory" -> :ok
+      "jira" -> validate_jira_tracker(settings.tracker)
+      kind -> {:error, {:unsupported_tracker_kind, kind}}
+    end
+  end
+
+  defp validate_linear_tracker(tracker) do
     cond do
-      is_nil(settings.tracker.kind) ->
-        {:error, :missing_tracker_kind}
+      not is_binary(tracker.api_key) -> {:error, :missing_linear_api_token}
+      not is_binary(tracker.project_slug) -> {:error, :missing_linear_project_slug}
+      true -> :ok
+    end
+  end
 
-      settings.tracker.kind not in ["linear", "memory"] ->
-        {:error, {:unsupported_tracker_kind, settings.tracker.kind}}
+  defp validate_jira_tracker(tracker) do
+    cond do
+      not is_binary(tracker.api_key) and not is_binary(tracker.api_key_file) ->
+        {:error, :missing_jira_api_token}
 
-      settings.tracker.kind == "linear" and not is_binary(settings.tracker.api_key) ->
-        {:error, :missing_linear_api_token}
+      not is_binary(tracker.endpoint) ->
+        {:error, :missing_jira_endpoint}
 
-      settings.tracker.kind == "linear" and not is_binary(settings.tracker.project_slug) ->
-        {:error, :missing_linear_project_slug}
+      not is_binary(tracker.project_slug) ->
+        {:error, :missing_jira_project_key}
 
       true ->
         :ok
