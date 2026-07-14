@@ -363,6 +363,11 @@ Fields:
   - Canonical environment variables for `tracker.kind == "jira"`: `JIRA_API_TOKEN`, then
     `JIRA_API_KEY`.
   - If `$VAR_NAME` resolves to an empty string, treat the key as missing.
+- `api_key_file` (string)
+  - MAY be a literal path or `$VAR_NAME` when `tracker.kind == "jira"`.
+  - Canonical environment variable: `JIRA_API_TOKEN_FILE`.
+  - The file is read for every Jira request and takes precedence over `api_key`, allowing a
+    projected secret to rotate without restarting the process.
 - `project_slug` (string)
   - REQUIRED for dispatch when `tracker.kind == "linear"`.
   - For `tracker.kind == "jira"`, this is the Jira project key and is REQUIRED for dispatch.
@@ -573,7 +578,7 @@ Validation checks:
 
 - Workflow file can be loaded and parsed.
 - `tracker.kind` is present and supported.
-- `tracker.api_key` is present after `$` resolution.
+- `tracker.api_key` is present after `$` resolution, or `tracker.api_key_file` is present for Jira.
 - `tracker.project_slug` is present when REQUIRED by the selected tracker kind.
 - `codex.command` is present and non-empty.
 
@@ -588,6 +593,8 @@ not require recognizing or validating extension fields unless that extension is 
   REQUIRED Jira Cloud site URL when `tracker.kind=jira`
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`,
   `JIRA_API_TOKEN`/`JIRA_API_KEY` when `tracker.kind=jira`
+- `tracker.api_key_file`: Jira-only token file path or `$VAR`, canonical env
+  `JIRA_API_TOKEN_FILE`; reread for every Jira request
 - `tracker.project_slug`: string, REQUIRED when `tracker.kind=linear`, Jira project key when
   `tracker.kind=jira`
 - `tracker.required_labels`: list of strings, default `[]`
@@ -1066,7 +1073,8 @@ Unsupported dynamic tool calls:
 Optional client-side tool extension:
 
 - An implementation MAY expose a limited set of client-side tools to the app-server session.
-- Current standardized optional tool: `linear_graphql`.
+- Current standardized optional tools: `linear_graphql`, `jira_create_comment`, and
+  `jira_transition_issue`.
 - If implemented, supported tools SHOULD be advertised to the app-server session during startup
   using the protocol mechanism supported by the targeted Codex app-server version.
 - Unsupported tool names SHOULD still return a failure result using the targeted protocol and
@@ -1104,6 +1112,17 @@ Optional client-side tool extension:
   - invalid input, missing auth, or transport failure -> `success=false` with an error payload
 - Return the GraphQL response or error payload as structured tool output that the model can inspect
   in-session.
+
+Jira tool extension contract:
+
+- Availability: only meaningful when `tracker.kind == "jira"` and valid Jira auth is configured.
+- `jira_create_comment` accepts a non-empty `issue_key` and plain-text `body`.
+- `jira_transition_issue` accepts a non-empty `issue_key` and destination `state` name.
+- Both tools MUST reject issue keys outside `tracker.project_slug`; the project key is the Jira
+  write allowlist, not merely a polling hint.
+- Reuse configured Jira auth without exposing the raw credential to the coding agent.
+- Successful writes return `success=true`; invalid input, missing auth, an unavailable transition,
+  or transport failure returns `success=false` with a structured error payload.
 
 User-input-required policy:
 
@@ -1201,6 +1220,10 @@ Jira-specific requirements for `tracker.kind == "jira"`:
 - `tracker.endpoint` is the Jira Cloud site URL; the REST API base is `/rest/api/3`.
 - `tracker.project_slug` maps to the Jira project key.
 - Candidate issue queries use Jira active status names through JQL.
+- Candidate and state refresh queries use enhanced JQL search (`/search/jql`) and follow
+  `nextPageToken` pagination.
+- Safe polling reads retry Jira rate limits and transient server failures; numeric `Retry-After`
+  headers take precedence over bounded exponential delay.
 - Issue comments are read before dispatch and claim lease markers are normalized into
   `issue.claim_lease`.
 - Claim lease upserts prefer `PUT /issue/{issueIdOrKey}/comment/{commentId}` over appending new
@@ -1232,6 +1255,7 @@ RECOMMENDED error categories:
 - `linear_unknown_payload`
 - `linear_missing_end_cursor` (pagination integrity error)
 - `missing_jira_api_token`
+- `jira_api_token_file` (configured token file is missing, unreadable, or empty)
 - `missing_jira_endpoint`
 - `missing_jira_project_key`
 - `jira_api_request` (transport failures)
@@ -2073,6 +2097,10 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
   - top-level GraphQL `errors` produce `success=false` while preserving the GraphQL body
   - invalid arguments, missing auth, and transport failures return structured failure payloads
   - unsupported tool names still fail without stalling the session
+- If the Jira client-side tool extension is implemented:
+  - comment and transition tools are advertised to the session
+  - writes are restricted to issue keys in the configured Jira project
+  - successful writes and structured failures are returned without exposing Jira credentials
 
 ### 17.6 Observability
 
@@ -2143,10 +2171,11 @@ Use the same validation profiles as Section 17:
   exposes the baseline endpoints/error semantics in Section 13.7 if shipped.
 - `linear_graphql` client-side tool extension exposes raw Linear GraphQL access through the
   app-server session using configured Symphony auth.
+- Jira comment and transition client-side tool extensions expose project-scoped handoff operations
+  through the app-server session using configured Symphony auth.
 - TODO: Persist retry queue and session metadata across process restarts.
 - TODO: Make observability settings configurable in workflow front matter without prescribing UI
   implementation details.
-- TODO: Generalize first-class tracker write APIs beyond orchestration claim leases.
 - TODO: Add more pluggable issue tracker adapters beyond Linear and Jira.
 
 ### 18.3 Operational Validation Before Production (RECOMMENDED)

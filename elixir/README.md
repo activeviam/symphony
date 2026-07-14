@@ -13,15 +13,16 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 
 ## How it works
 
-1. Polls Linear for candidate work
+1. Polls a configured tracker (Linear, Jira, or the in-memory adapter) for candidate work
 2. Creates a workspace per issue
 3. Launches Codex in [App Server mode](https://developers.openai.com/codex/app-server/) inside the
    workspace
 4. Sends a workflow prompt to Codex
 5. Keeps Codex working on the issue until the work is done
 
-During app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that repo
-skills can make raw Linear GraphQL calls.
+During app-server sessions, Symphony serves tracker-aware client-side tools. Linear workflows can
+use `linear_graphql`; Jira workflows can use project-scoped `jira_create_comment` and
+`jira_transition_issue` tools.
 
 If a claimed issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, or `Duplicate`),
 Symphony stops the active agent for that issue and cleans up matching workspaces.
@@ -145,12 +146,24 @@ Notes:
   - `tracker.endpoint` is the Jira Cloud site URL, for example `https://example.atlassian.net`;
     it may also be provided through `JIRA_ENDPOINT` or `JIRA_BASE_URL`.
   - `tracker.project_slug` is the Jira project key.
+  - `tracker.required_labels` is the dispatch allowlist. For a board shared with humans, set it to
+    `["symphony"]` (or another explicit opt-in label) so unlabelled work never dispatches.
   - `tracker.active_states` and `tracker.terminal_states` are Jira status names.
   - `tracker.api_key` may be a full `Bearer ...` or `Basic ...` Authorization value. Raw tokens
     are sent as bearer tokens.
+  - `tracker.api_key_file` may point to a mounted Jira token file and falls back to
+    `JIRA_API_TOKEN_FILE`. Symphony rereads the file for every request so a projected Kubernetes
+    Secret can rotate OAuth access tokens without restarting the pod. When configured, the file
+    takes precedence over `tracker.api_key`.
   - Symphony reads and upserts a durable claim lease marker in issue comments before dispatching.
     When the marker comment already exists, Jira comment edit APIs are used instead of appending
     repeated heartbeat comments.
+  - Safe Jira polling reads retry rate limits and transient server failures, honoring numeric
+    `Retry-After` headers.
+  - Jira dynamic-tool writes are restricted to issue keys in `tracker.project_slug`.
+  - See [`examples/WORKFLOW.jira-atrs.md`](examples/WORKFLOW.jira-atrs.md) for a single-replica
+    ActiveViam pilot workflow using `activeviam/atoti-risk-admin-dashboard` and the `symphony`
+    label gate.
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
   while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the

@@ -48,6 +48,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:kind, :string)
       field(:endpoint, :string, default: "https://api.linear.app/graphql")
       field(:api_key, :string)
+      field(:api_key_file, :string)
       field(:project_slug, :string)
       field(:assignee, :string)
       field(:required_labels, {:array, :string}, default: [])
@@ -60,7 +61,17 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:kind, :endpoint, :api_key, :project_slug, :assignee, :required_labels, :active_states, :terminal_states],
+        [
+          :kind,
+          :endpoint,
+          :api_key,
+          :api_key_file,
+          :project_slug,
+          :assignee,
+          :required_labels,
+          :active_states,
+          :terminal_states
+        ],
         empty_values: []
       )
       |> update_change(:required_labels, fn labels ->
@@ -376,6 +387,7 @@ defmodule SymphonyElixir.Config.Schema do
       settings.tracker
       | endpoint: resolve_tracker_endpoint(settings.tracker.kind, settings.tracker.endpoint),
         api_key: resolve_secret_setting(settings.tracker.api_key, tracker_api_key_fallback(settings.tracker.kind)),
+        api_key_file: resolve_secret_setting(settings.tracker.api_key_file, tracker_api_key_file_fallback(settings.tracker.kind)),
         assignee: resolve_secret_setting(settings.tracker.assignee, System.get_env("LINEAR_ASSIGNEE"))
     }
 
@@ -455,6 +467,9 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp tracker_api_key_fallback(_kind), do: System.get_env("LINEAR_API_KEY")
+
+  defp tracker_api_key_file_fallback("jira"), do: System.get_env("JIRA_API_TOKEN_FILE")
+  defp tracker_api_key_file_fallback(_kind), do: nil
 
   defp resolve_path_value(value, default) when is_binary(value) do
     case normalize_path_token(value) do

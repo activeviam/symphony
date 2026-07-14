@@ -2,24 +2,23 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
   use SymphonyElixir.TestSupport
 
   alias SymphonyElixir.Codex.DynamicTool
+  alias SymphonyElixir.Workflow
 
-  test "tool_specs advertises the linear_graphql input contract" do
-    assert [
-             %{
-               "description" => description,
-               "inputSchema" => %{
-                 "properties" => %{
-                   "query" => _,
-                   "variables" => _
-                 },
-                 "required" => ["query"],
-                 "type" => "object"
+  test "tool_specs advertises tracker write tools and the linear_graphql input contract" do
+    assert %{
+             "description" => description,
+             "inputSchema" => %{
+               "properties" => %{
+                 "query" => _,
+                 "variables" => _
                },
-               "name" => "linear_graphql"
+               "required" => ["query"],
+               "type" => "object"
              }
-           ] = DynamicTool.tool_specs()
+           } = Enum.find(DynamicTool.tool_specs(), &(&1["name"] == "linear_graphql"))
 
     assert description =~ "Linear"
+    assert Enum.map(DynamicTool.tool_specs(), & &1["name"]) == ["linear_graphql", "jira_create_comment", "jira_transition_issue"]
   end
 
   test "unsupported tools return a failure payload with the supported tool list" do
@@ -30,7 +29,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert Jason.decode!(response["output"]) == %{
              "error" => %{
                "message" => ~s(Unsupported dynamic tool: "not_a_real_tool".),
-               "supportedTools" => ["linear_graphql"]
+               "supportedTools" => ["linear_graphql", "jira_create_comment", "jira_transition_issue"]
              }
            }
 
@@ -306,5 +305,64 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
     assert response["success"] == true
     assert response["output"] == ":ok"
+  end
+
+  test "jira_create_comment scopes writes to the configured Jira project" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "jira",
+      tracker_endpoint: "https://example.atlassian.net",
+      tracker_api_token: "Bearer jira-token",
+      tracker_project_slug: "ATRS"
+    )
+
+    test_pid = self()
+
+    response =
+      DynamicTool.execute(
+        "jira_create_comment",
+        %{"issue_key" => "ATRS-123", "body" => "PR ready for review"},
+        jira_create_comment: fn issue_key, body ->
+          send(test_pid, {:jira_comment, issue_key, body})
+          :ok
+        end
+      )
+
+    assert_received {:jira_comment, "ATRS-123", "PR ready for review"}
+    assert response["success"] == true
+
+    rejected =
+      DynamicTool.execute(
+        "jira_create_comment",
+        %{"issue_key" => "OTHER-1", "body" => "must not write"},
+        jira_create_comment: fn _issue_key, _body -> flunk("out-of-project Jira write was attempted") end
+      )
+
+    assert rejected["success"] == false
+    assert get_in(Jason.decode!(rejected["output"]), ["error", "message"]) =~ "restricted to project ATRS"
+  end
+
+  test "jira_transition_issue delegates an allowed named transition" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "jira",
+      tracker_endpoint: "https://example.atlassian.net",
+      tracker_api_token: "Bearer jira-token",
+      tracker_project_slug: "ATRS"
+    )
+
+    test_pid = self()
+
+    response =
+      DynamicTool.execute(
+        "jira_transition_issue",
+        %{"issue_key" => "ATRS-456", "state" => "Human Review"},
+        jira_transition: fn issue_key, state ->
+          send(test_pid, {:jira_transition, issue_key, state})
+          :ok
+        end
+      )
+
+    assert_received {:jira_transition, "ATRS-456", "Human Review"}
+    assert response["success"] == true
+    assert Jason.decode!(response["output"])["state"] == "Human Review"
   end
 end

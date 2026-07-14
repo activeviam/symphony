@@ -412,17 +412,15 @@ defmodule SymphonyElixir.ExtensionsTest do
     request_recipient = self()
 
     Application.put_env(:symphony_elixir, :jira_request_fun, fn
-      :get, "/search", opts, _tracker ->
-        send(request_recipient, {:jira_request, :get, "/search", opts})
+      :post, "/search/jql", opts, _tracker ->
+        send(request_recipient, {:jira_request, :post, "/search/jql", opts})
 
         {:ok,
          %{
            status: 200,
            body: %{
              "issues" => [jira_issue_payload("10001", "SD-1", "In Progress")],
-             "startAt" => 0,
-             "maxResults" => 50,
-             "total" => 1
+             "isLast" => true
            }
          }}
 
@@ -457,10 +455,124 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert issue.claim_lease.holder == "remote-holder"
     assert issue.claim_lease.expires_at == marker_expires_at
 
-    assert_receive {:jira_request, :get, "/search", search_opts}
-    assert search_opts[:params].jql =~ ~s(project = "SD")
-    assert search_opts[:params].jql =~ "status in (\"Todo\", \"In Progress\")"
+    assert_receive {:jira_request, :post, "/search/jql", search_opts}
+    assert search_opts[:json]["jql"] =~ ~s(project = "SD")
+    assert search_opts[:json]["jql"] =~ "status in (\"Todo\", \"In Progress\")"
+    assert search_opts[:json]["maxResults"] == 50
+    assert is_list(search_opts[:json]["fields"])
     assert_receive {:jira_request, :get, "/issue/SD-1/comment", _comment_opts}
+  end
+
+  test "jira adapter follows enhanced JQL next-page tokens" do
+    request_recipient = self()
+
+    Application.put_env(:symphony_elixir, :jira_request_fun, fn
+      :post, "/search/jql", opts, _tracker ->
+        token = opts[:json]["nextPageToken"]
+        send(request_recipient, {:jira_search_token, token})
+
+        body =
+          case token do
+            nil ->
+              %{
+                "issues" => [jira_issue_payload("10001", "SD-1", "Todo")],
+                "isLast" => false,
+                "nextPageToken" => "page-2"
+              }
+
+            "page-2" ->
+              %{
+                "issues" => [jira_issue_payload("10002", "SD-2", "In Progress")],
+                "isLast" => true
+              }
+          end
+
+        {:ok, %{status: 200, body: body}}
+
+      :get, "/issue/SD-" <> _issue_path, _opts, _tracker ->
+        {:ok, %{status: 200, body: %{"comments" => [], "startAt" => 0, "maxResults" => 100, "total" => 0}}}
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "jira",
+      tracker_endpoint: "https://example.atlassian.net",
+      tracker_api_token: "Bearer jira-token",
+      tracker_project_slug: "SD"
+    )
+
+    assert {:ok, issues} = JiraAdapter.fetch_candidate_issues()
+    assert Enum.map(issues, & &1.identifier) == ["SD-1", "SD-2"]
+    assert_receive {:jira_search_token, nil}
+    assert_receive {:jira_search_token, "page-2"}
+  end
+
+  test "jira adapter rereads a configured token file for every request" do
+    token_file = Path.join(System.tmp_dir!(), "symphony-jira-token-#{System.unique_integer([:positive])}")
+    File.write!(token_file, "Bearer first-token\n")
+    on_exit(fn -> File.rm(token_file) end)
+
+    request_recipient = self()
+
+    Application.put_env(:symphony_elixir, :jira_request_fun, fn
+      :post, "/search/jql", opts, _tracker ->
+        {"Authorization", authorization} =
+          List.keyfind(Keyword.fetch!(opts, :headers), "Authorization", 0)
+
+        send(request_recipient, {:jira_authorization, authorization})
+
+        {:ok,
+         %{
+           status: 200,
+           body: %{"issues" => [], "isLast" => true}
+         }}
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "jira",
+      tracker_endpoint: "https://example.atlassian.net",
+      tracker_api_token: nil,
+      tracker_api_token_file: token_file,
+      tracker_project_slug: "SD"
+    )
+
+    assert {:ok, []} = JiraAdapter.fetch_candidate_issues()
+    assert_receive {:jira_authorization, "Bearer first-token"}
+
+    File.write!(token_file, "Bearer rotated-token\n")
+
+    assert {:ok, []} = JiraAdapter.fetch_candidate_issues()
+    assert_receive {:jira_authorization, "Bearer rotated-token"}
+  end
+
+  test "jira adapter honors retry-after for rate-limited safe reads" do
+    request_recipient = self()
+    Process.put(:jira_search_attempt, 0)
+
+    Application.put_env(:symphony_elixir, :jira_sleep_fun, fn delay_ms ->
+      send(request_recipient, {:jira_retry_sleep, delay_ms})
+    end)
+
+    Application.put_env(:symphony_elixir, :jira_request_fun, fn
+      :post, "/search/jql", _opts, _tracker ->
+        attempt = Process.get(:jira_search_attempt, 0)
+        Process.put(:jira_search_attempt, attempt + 1)
+
+        case attempt do
+          0 -> {:ok, %{status: 429, body: %{}, headers: %{"retry-after" => ["2"]}}}
+          1 -> {:ok, %{status: 200, body: %{"issues" => [], "isLast" => true}}}
+        end
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "jira",
+      tracker_endpoint: "https://example.atlassian.net",
+      tracker_api_token: "Bearer jira-token",
+      tracker_project_slug: "SD"
+    )
+
+    assert {:ok, []} = JiraAdapter.fetch_candidate_issues()
+    assert_receive {:jira_retry_sleep, 2_000}
+    assert Process.get(:jira_search_attempt) == 2
   end
 
   test "jira adapter updates existing claim lease marker comments idempotently" do

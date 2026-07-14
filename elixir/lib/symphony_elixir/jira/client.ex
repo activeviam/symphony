@@ -10,15 +10,18 @@ defmodule SymphonyElixir.Jira.Client do
 
   @issue_page_size 50
   @comment_page_size 100
-  @issue_fields "summary,description,priority,status,labels,assignee,created,updated"
+  @issue_fields ~w(summary description priority status labels assignee created updated)
   @max_error_body_log_bytes 1_000
+  @max_safe_request_retries 3
+  @base_retry_delay_ms 500
+  @max_retry_delay_ms 30_000
 
   @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues do
     tracker = Config.settings!().tracker
 
     cond do
-      is_nil(tracker.api_key) ->
+      not jira_credentials_configured?(tracker) ->
         {:error, :missing_jira_api_token}
 
       is_nil(tracker.project_slug) ->
@@ -41,7 +44,7 @@ defmodule SymphonyElixir.Jira.Client do
       tracker = Config.settings!().tracker
 
       cond do
-        is_nil(tracker.api_key) ->
+        not jira_credentials_configured?(tracker) ->
           {:error, :missing_jira_api_token}
 
         is_nil(tracker.project_slug) ->
@@ -101,42 +104,58 @@ defmodule SymphonyElixir.Jira.Client do
   def adf_to_text_for_test(value), do: adf_to_text(value)
 
   defp fetch_issues_by_jql(jql) when is_binary(jql) do
-    do_fetch_issues_by_jql(jql, 0, [])
+    do_fetch_issues_by_jql(jql, nil, [], [])
   end
 
-  defp do_fetch_issues_by_jql(jql, start_at, acc_issues) do
+  defp do_fetch_issues_by_jql(jql, next_page_token, seen_page_tokens, acc_issues) do
+    request_body =
+      %{
+        "jql" => jql,
+        "maxResults" => @issue_page_size,
+        "fields" => @issue_fields
+      }
+      |> maybe_put_next_page_token(next_page_token)
+
     with {:ok, body} <-
-           request_json(:get, "/search",
-             params: %{
-               jql: jql,
-               startAt: start_at,
-               maxResults: @issue_page_size,
-               fields: @issue_fields
-             }
-           ),
+           request_json(:post, "/search/jql", json: request_body, retry: true),
          {:ok, issues, page_info} <- decode_issue_page(body),
          {:ok, normalized_issues} <- normalize_issues(issues) do
       updated_acc = Enum.reverse(normalized_issues, acc_issues)
 
-      if page_info.next_start_at do
-        do_fetch_issues_by_jql(jql, page_info.next_start_at, updated_acc)
-      else
-        {:ok, Enum.reverse(updated_acc)}
-      end
+      continue_issue_pagination(jql, page_info.next_page_token, seen_page_tokens, updated_acc)
+    end
+  end
+
+  defp continue_issue_pagination(_jql, nil, _seen_page_tokens, acc_issues) do
+    {:ok, Enum.reverse(acc_issues)}
+  end
+
+  defp continue_issue_pagination(jql, token, seen_page_tokens, acc_issues) do
+    if token in seen_page_tokens do
+      {:error, :jira_pagination_loop}
+    else
+      do_fetch_issues_by_jql(jql, token, [token | seen_page_tokens], acc_issues)
     end
   end
 
   defp decode_issue_page(%{"issues" => issues} = body) when is_list(issues) do
-    start_at = integer_value(body["startAt"], 0)
-    max_results = integer_value(body["maxResults"], length(issues))
-    total = integer_value(body["total"], start_at + length(issues))
-    next_start_at = next_start_at(start_at, max_results, length(issues), total)
+    next_page_token = normalize_string(body["nextPageToken"])
 
-    {:ok, issues, %{next_start_at: next_start_at}}
+    if body["isLast"] == false and is_nil(next_page_token) do
+      {:error, :jira_missing_next_page_token}
+    else
+      {:ok, issues, %{next_page_token: next_page_token}}
+    end
   end
 
   defp decode_issue_page(%{"errorMessages" => errors}), do: {:error, {:jira_errors, errors}}
   defp decode_issue_page(_body), do: {:error, :jira_unknown_payload}
+
+  defp maybe_put_next_page_token(body, nil), do: body
+
+  defp maybe_put_next_page_token(body, token) when is_binary(token) do
+    Map.put(body, "nextPageToken", token)
+  end
 
   defp next_start_at(start_at, max_results, issue_count, total) do
     candidate = start_at + max(max_results, issue_count)
@@ -195,7 +214,10 @@ defmodule SymphonyElixir.Jira.Client do
 
   defp do_fetch_issue_comments(issue_id_or_key, start_at, acc_comments) do
     with {:ok, body} <-
-           request_json(:get, "/issue/#{url_path_token(issue_id_or_key)}/comment", params: %{startAt: start_at, maxResults: @comment_page_size}),
+           request_json(:get, "/issue/#{url_path_token(issue_id_or_key)}/comment",
+             params: %{startAt: start_at, maxResults: @comment_page_size},
+             retry: true
+           ),
          {:ok, comments, page_info} <- decode_comment_page(body) do
       updated_acc = Enum.reverse(comments, acc_comments)
 
@@ -231,7 +253,7 @@ defmodule SymphonyElixir.Jira.Client do
   defp normalize_comment(_comment), do: nil
 
   defp fetch_transitions(issue_id) do
-    case request_json(:get, "/issue/#{url_path_token(issue_id)}/transitions") do
+    case request_json(:get, "/issue/#{url_path_token(issue_id)}/transitions", retry: true) do
       {:ok, %{"transitions" => transitions}} when is_list(transitions) -> {:ok, transitions}
       {:ok, _body} -> {:error, :jira_unknown_payload}
       {:error, reason} -> {:error, reason}
@@ -301,22 +323,85 @@ defmodule SymphonyElixir.Jira.Client do
     end
   end
 
-  defp request_json(method, path, opts \\ []) when is_atom(method) and is_binary(path) and is_list(opts) do
+  defp request_json(method, path, opts) when is_atom(method) and is_binary(path) and is_list(opts) do
     tracker = Config.settings!().tracker
 
-    with {:ok, headers} <- jira_headers(tracker),
-         {:ok, %{status: status, body: body}} <- request_fun().(method, path, Keyword.put(opts, :headers, headers), tracker) do
-      if status in 200..299 do
-        {:ok, body || %{}}
-      else
-        Logger.error("Jira REST request failed method=#{method} path=#{path} status=#{status} body=#{summarize_error_body(body)}")
-        {:error, {:jira_api_status, status}}
-      end
-    else
+    case jira_headers(tracker) do
+      {:ok, headers} ->
+        do_request_json(method, path, Keyword.put(opts, :headers, headers), tracker, 0)
+
       {:error, reason} ->
         Logger.error("Jira REST request failed method=#{method} path=#{path}: #{inspect(reason)}")
         {:error, {:jira_api_request, reason}}
     end
+  end
+
+  defp do_request_json(method, path, opts, tracker, attempt) do
+    case request_fun().(method, path, opts, tracker) do
+      {:ok, %{status: status, body: body} = response} ->
+        handle_jira_response(method, path, opts, tracker, attempt, status, body, response)
+
+      {:error, reason} ->
+        Logger.error("Jira REST request failed method=#{method} path=#{path}: #{inspect(reason)}")
+        {:error, {:jira_api_request, reason}}
+    end
+  end
+
+  defp handle_jira_response(method, path, opts, tracker, attempt, status, body, response) do
+    cond do
+      status in 200..299 ->
+        {:ok, body || %{}}
+
+      retryable_response?(status, opts, attempt) ->
+        retry_request(method, path, opts, tracker, attempt, status, response)
+
+      true ->
+        Logger.error("Jira REST request failed method=#{method} path=#{path} status=#{status} body=#{summarize_error_body(body)}")
+        {:error, {:jira_api_status, status}}
+    end
+  end
+
+  defp retry_request(method, path, opts, tracker, attempt, status, response) do
+    retry_delay_ms = retry_delay_ms(response, attempt)
+    Logger.warning("Retrying Jira REST request method=#{method} path=#{path} status=#{status} attempt=#{attempt + 1} delay_ms=#{retry_delay_ms}")
+    jira_sleep_fun().(retry_delay_ms)
+    do_request_json(method, path, opts, tracker, attempt + 1)
+  end
+
+  defp retryable_response?(status, opts, attempt) do
+    Keyword.get(opts, :retry, false) and
+      attempt < @max_safe_request_retries and
+      status in [429, 500, 502, 503, 504]
+  end
+
+  defp retry_delay_ms(response, attempt) do
+    retry_after_ms(response) ||
+      min(@base_retry_delay_ms * Integer.pow(2, attempt), @max_retry_delay_ms)
+  end
+
+  defp retry_after_ms(%{headers: headers}) when is_map(headers) do
+    headers
+    |> Map.get("retry-after", Map.get(headers, "Retry-After"))
+    |> first_header_value()
+    |> parse_retry_after_ms()
+  end
+
+  defp retry_after_ms(_response), do: nil
+
+  defp first_header_value([value | _rest]), do: value
+  defp first_header_value(value), do: value
+
+  defp parse_retry_after_ms(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {seconds, ""} when seconds >= 0 -> min(seconds * 1_000, @max_retry_delay_ms)
+      _ -> nil
+    end
+  end
+
+  defp parse_retry_after_ms(_value), do: nil
+
+  defp jira_sleep_fun do
+    Application.get_env(:symphony_elixir, :jira_sleep_fun, &Process.sleep/1)
   end
 
   defp request_fun do
@@ -335,17 +420,49 @@ defmodule SymphonyElixir.Jira.Client do
   end
 
   defp jira_headers(tracker) do
-    case normalize_string(tracker.api_key) do
-      nil ->
-        {:error, :missing_jira_api_token}
-
-      token ->
+    case jira_token(tracker) do
+      {:ok, token} ->
         {:ok,
          [
            {"Authorization", authorization_header(token)},
            {"Accept", "application/json"},
            {"Content-Type", "application/json"}
          ]}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp jira_credentials_configured?(tracker) do
+    not is_nil(normalize_string(tracker.api_key_file)) or not is_nil(normalize_string(tracker.api_key))
+  end
+
+  defp jira_token(tracker) do
+    case normalize_string(tracker.api_key_file) do
+      nil -> normalize_jira_token(tracker.api_key)
+      path -> jira_token_from_file(path)
+    end
+  end
+
+  defp jira_token_from_file(path) do
+    case File.read(path) do
+      {:ok, contents} -> normalize_jira_file_token(contents)
+      {:error, reason} -> {:error, {:jira_api_token_file, reason}}
+    end
+  end
+
+  defp normalize_jira_file_token(contents) do
+    case normalize_string(contents) do
+      nil -> {:error, {:jira_api_token_file, :empty}}
+      token -> {:ok, token}
+    end
+  end
+
+  defp normalize_jira_token(value) do
+    case normalize_string(value) do
+      nil -> {:error, :missing_jira_api_token}
+      token -> {:ok, token}
     end
   end
 

@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   Executes client-side tool calls requested by Codex app-server turns.
   """
 
-  alias SymphonyElixir.Linear.Client
+  alias SymphonyElixir.{Config, Linear.Client, Tracker}
 
   @linear_graphql_tool "linear_graphql"
   @linear_graphql_description """
@@ -26,11 +26,41 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     }
   }
 
+  @jira_create_comment_tool "jira_create_comment"
+  @jira_create_comment_description "Create a comment on a Jira issue in Symphony's configured project."
+  @jira_create_comment_input_schema %{
+    "type" => "object",
+    "additionalProperties" => false,
+    "required" => ["issue_key", "body"],
+    "properties" => %{
+      "issue_key" => %{"type" => "string", "description" => "Jira issue key, for example ATRS-123."},
+      "body" => %{"type" => "string", "description" => "Plain-text comment body."}
+    }
+  }
+
+  @jira_transition_issue_tool "jira_transition_issue"
+  @jira_transition_issue_description "Transition a Jira issue in Symphony's configured project to a named status."
+  @jira_transition_issue_input_schema %{
+    "type" => "object",
+    "additionalProperties" => false,
+    "required" => ["issue_key", "state"],
+    "properties" => %{
+      "issue_key" => %{"type" => "string", "description" => "Jira issue key, for example ATRS-123."},
+      "state" => %{"type" => "string", "description" => "Exact destination status name, for example Human Review."}
+    }
+  }
+
   @spec execute(String.t() | nil, term(), keyword()) :: map()
   def execute(tool, arguments, opts \\ []) do
     case tool do
       @linear_graphql_tool ->
         execute_linear_graphql(arguments, opts)
+
+      @jira_create_comment_tool ->
+        execute_jira_create_comment(arguments, opts)
+
+      @jira_transition_issue_tool ->
+        execute_jira_transition_issue(arguments, opts)
 
       other ->
         failure_response(%{
@@ -49,6 +79,16 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         "name" => @linear_graphql_tool,
         "description" => @linear_graphql_description,
         "inputSchema" => @linear_graphql_input_schema
+      },
+      %{
+        "name" => @jira_create_comment_tool,
+        "description" => @jira_create_comment_description,
+        "inputSchema" => @jira_create_comment_input_schema
+      },
+      %{
+        "name" => @jira_transition_issue_tool,
+        "description" => @jira_transition_issue_description,
+        "inputSchema" => @jira_transition_issue_input_schema
       }
     ]
   end
@@ -62,6 +102,77 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     else
       {:error, reason} ->
         failure_response(tool_error_payload(reason))
+    end
+  end
+
+  defp execute_jira_create_comment(arguments, opts) do
+    jira_create_comment = Keyword.get(opts, :jira_create_comment, &Tracker.create_comment/2)
+
+    with {:ok, issue_key, body} <- normalize_jira_arguments(arguments, "body"),
+         :ok <- validate_jira_issue_key(issue_key),
+         :ok <- jira_create_comment.(issue_key, body) do
+      success_response(%{"issueKey" => issue_key, "operation" => "comment_created"})
+    else
+      {:error, reason} -> failure_response(jira_tool_error_payload(reason))
+    end
+  end
+
+  defp execute_jira_transition_issue(arguments, opts) do
+    jira_transition = Keyword.get(opts, :jira_transition, &Tracker.update_issue_state/2)
+
+    with {:ok, issue_key, state} <- normalize_jira_arguments(arguments, "state"),
+         :ok <- validate_jira_issue_key(issue_key),
+         :ok <- jira_transition.(issue_key, state) do
+      success_response(%{"issueKey" => issue_key, "operation" => "transitioned", "state" => state})
+    else
+      {:error, reason} -> failure_response(jira_tool_error_payload(reason))
+    end
+  end
+
+  defp normalize_jira_arguments(arguments, value_key) when is_map(arguments) do
+    with {:ok, issue_key} <- required_string(arguments, "issue_key"),
+         {:ok, value} <- required_string(arguments, value_key) do
+      {:ok, issue_key, value}
+    end
+  end
+
+  defp normalize_jira_arguments(_arguments, _value_key), do: {:error, :invalid_jira_arguments}
+
+  defp required_string(arguments, key) do
+    value = Map.get(arguments, key) || Map.get(arguments, jira_argument_atom(key))
+
+    case value do
+      value when is_binary(value) ->
+        case String.trim(value) do
+          "" -> {:error, {:missing_jira_argument, key}}
+          trimmed -> {:ok, trimmed}
+        end
+
+      _ ->
+        {:error, {:missing_jira_argument, key}}
+    end
+  end
+
+  defp jira_argument_atom("issue_key"), do: :issue_key
+  defp jira_argument_atom("body"), do: :body
+  defp jira_argument_atom("state"), do: :state
+
+  defp validate_jira_issue_key(issue_key) do
+    tracker = Config.settings!().tracker
+    project_key = tracker.project_slug |> to_string() |> String.trim() |> String.upcase()
+
+    cond do
+      tracker.kind != "jira" ->
+        {:error, :jira_tracker_not_configured}
+
+      project_key == "" ->
+        {:error, :missing_jira_project_key}
+
+      Regex.match?(~r/^#{Regex.escape(project_key)}-\d+$/i, issue_key) ->
+        :ok
+
+      true ->
+        {:error, {:jira_issue_outside_project, project_key}}
     end
   end
 
@@ -123,6 +234,10 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   defp failure_response(payload) do
     dynamic_tool_response(false, encode_payload(payload))
+  end
+
+  defp success_response(payload) do
+    dynamic_tool_response(true, encode_payload(payload))
   end
 
   defp dynamic_tool_response(success, output) when is_boolean(success) and is_binary(output) do
@@ -198,6 +313,35 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     %{
       "error" => %{
         "message" => "Linear GraphQL tool execution failed.",
+        "reason" => inspect(reason)
+      }
+    }
+  end
+
+  defp jira_tool_error_payload(:invalid_jira_arguments) do
+    %{"error" => %{"message" => "Jira tools require a JSON object with the documented fields."}}
+  end
+
+  defp jira_tool_error_payload({:missing_jira_argument, key}) do
+    %{"error" => %{"message" => "Jira tool argument `#{key}` must be a non-empty string."}}
+  end
+
+  defp jira_tool_error_payload(:jira_tracker_not_configured) do
+    %{"error" => %{"message" => "Jira tools are unavailable because `tracker.kind` is not `jira`."}}
+  end
+
+  defp jira_tool_error_payload(:missing_jira_project_key) do
+    %{"error" => %{"message" => "Jira tools require `tracker.project_slug` to scope writes."}}
+  end
+
+  defp jira_tool_error_payload({:jira_issue_outside_project, project_key}) do
+    %{"error" => %{"message" => "Jira writes are restricted to project #{project_key}."}}
+  end
+
+  defp jira_tool_error_payload(reason) do
+    %{
+      "error" => %{
+        "message" => "Jira tool execution failed.",
         "reason" => inspect(reason)
       }
     }

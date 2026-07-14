@@ -4,6 +4,7 @@ defmodule SymphonyElixir.CoreTest do
   test "config defaults and validation checks" do
     previous_jira_api_token = System.get_env("JIRA_API_TOKEN")
     previous_jira_api_key = System.get_env("JIRA_API_KEY")
+    previous_jira_api_token_file = System.get_env("JIRA_API_TOKEN_FILE")
     previous_jira_endpoint = System.get_env("JIRA_ENDPOINT")
     previous_jira_base_url = System.get_env("JIRA_BASE_URL")
     previous_missing_tracker_endpoint = System.get_env("MISSING_TRACKER_ENDPOINT")
@@ -11,6 +12,7 @@ defmodule SymphonyElixir.CoreTest do
     on_exit(fn ->
       restore_env("JIRA_API_TOKEN", previous_jira_api_token)
       restore_env("JIRA_API_KEY", previous_jira_api_key)
+      restore_env("JIRA_API_TOKEN_FILE", previous_jira_api_token_file)
       restore_env("JIRA_ENDPOINT", previous_jira_endpoint)
       restore_env("JIRA_BASE_URL", previous_jira_base_url)
       restore_env("MISSING_TRACKER_ENDPOINT", previous_missing_tracker_endpoint)
@@ -18,6 +20,7 @@ defmodule SymphonyElixir.CoreTest do
 
     System.delete_env("JIRA_API_TOKEN")
     System.delete_env("JIRA_API_KEY")
+    System.delete_env("JIRA_API_TOKEN_FILE")
     System.delete_env("JIRA_ENDPOINT")
     System.delete_env("JIRA_BASE_URL")
     System.delete_env("MISSING_TRACKER_ENDPOINT")
@@ -124,6 +127,16 @@ defmodule SymphonyElixir.CoreTest do
     )
 
     assert {:error, :missing_jira_api_token} = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "jira",
+      tracker_endpoint: "https://example.atlassian.net",
+      tracker_api_token: nil,
+      tracker_api_token_file: "/var/run/secrets/symphony/jira-api-token",
+      tracker_project_slug: "SD"
+    )
+
+    assert :ok = Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_kind: "jira",

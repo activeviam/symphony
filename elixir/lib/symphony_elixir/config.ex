@@ -134,10 +134,17 @@ defmodule SymphonyElixir.Config do
 
   defp validate_jira_tracker(tracker) do
     cond do
-      not is_binary(tracker.api_key) -> {:error, :missing_jira_api_token}
-      not is_binary(tracker.endpoint) -> {:error, :missing_jira_endpoint}
-      not is_binary(tracker.project_slug) -> {:error, :missing_jira_project_key}
-      true -> :ok
+      not is_binary(tracker.api_key) and not is_binary(tracker.api_key_file) ->
+        {:error, :missing_jira_api_token}
+
+      not is_binary(tracker.endpoint) ->
+        {:error, :missing_jira_endpoint}
+
+      not is_binary(tracker.project_slug) ->
+        {:error, :missing_jira_project_key}
+
+      true ->
+        :ok
     end
   end
 
