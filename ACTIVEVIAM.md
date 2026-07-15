@@ -151,16 +151,24 @@ underlying manifest change through GitOps instead.
 
 1. Accepts a successful make-all push run on main, or a manual retry launched from main.
 2. Re-runs make all for a manual retry and rejects a source commit that is not in main.
-3. Builds ARM64 on the shared-arm64-activeviam ARC runner.
-4. Publishes an immutable ECR tag named git-<full-source-sha>-arm64 and resolves its digest.
-5. Uses the ActiveViam Symphony Deployer GitHub App to update only
-   services/symphony/envs/shared/kustomization.yaml.
-6. Pushes a deployment branch and opens a pull request in activeviam/shared-infrastructure.
-7. Stops. It never merges the deployment pull request.
+3. Uses the ActiveViam Symphony Deployer GitHub App to send the tested source SHA to
+   activeviam/shared-infrastructure as a repository-dispatch event.
+4. Stops without running privileged work in this public repository.
 
-The deployment job uses activeviam-shared-arm64-small. The App is installed only on
-activeviam/shared-infrastructure with repository contents and pull-request read/write access.
-The source repository holds:
+The private activeviam/shared-infrastructure workflow then:
+
+1. Verifies the requested commit belongs to activeviam/symphony main.
+2. Builds ARM64 on the shared-arm64-activeviam ARC runner.
+3. Publishes an immutable ECR tag named git-<full-source-sha>-arm64 and resolves its digest.
+4. Updates only services/symphony/envs/shared/kustomization.yaml.
+5. Pushes a deployment branch and opens a pull request.
+6. Stops. It never merges the deployment pull request.
+
+Privileged self-hosted runners are intentionally available only to private repositories. A public
+repository can receive pull requests from forks, so enabling its workflows on AWS-enabled runners
+would expand the trust boundary unnecessarily. The App is installed only on
+activeviam/shared-infrastructure with repository contents and pull-request read/write access. The
+source repository holds:
 
 - Actions variable SYMPHONY_DEPLOY_APP_ID
 - Actions secret SYMPHONY_DEPLOY_APP_PRIVATE_KEY
@@ -174,7 +182,8 @@ After this workflow first reaches main, the expected chain is:
 ~~~text
 merge source PR
   -> make-all succeeds on main
-  -> publish-shared builds or reuses the immutable image
+  -> publish-shared dispatches the tested SHA to the private repository
+  -> shared-infrastructure builds or reuses the immutable image
   -> deployment PR is opened
   -> human reviews and merges the deployment PR
   -> Argo CD reconciles Shared EKS
@@ -220,7 +229,7 @@ Keep these ActiveViam-owned unless upstream asks for a general abstraction:
 
 After the CI/deployment PR for this guide is merged:
 
-1. Watch make-all and publish-shared.
+1. Watch make-all, publish-shared, and the private publish-symphony workflow.
 2. Review the generated shared-infrastructure pull request and confirm it changes one digest only.
 3. Merge that deployment pull request manually if its checks and diff are acceptable.
 4. Verify Argo CD sync, both deployments, the CronJob, and the two ingress routes.
