@@ -187,6 +187,33 @@ codex:
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
   `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
 
+## Container image
+
+The production pilot image is built from `elixir/Dockerfile`. It contains the
+Symphony escript, Codex CLI, Git, GitHub CLI, and the tools required by a local
+workspace worker. The runtime is non-root and supports ARM64 and AMD64 through
+the upstream multi-architecture base images.
+
+The pilot entrypoint expects `AWS_REGION` plus `GITHUB_APP_ID`,
+`GITHUB_APP_INSTALLATION_ID`, and `GITHUB_APP_PRIVATE_KEY_FILE`. The bundled
+`gh` wrapper exchanges those credentials for a short-lived installation token
+on every authenticated invocation, and `gh auth setup-git` installs the same
+refreshing path as Git's credential helper. No personal GitHub token is stored
+in the pod.
+
+The pilot workflow selects Codex's built-in `amazon-bedrock` provider and
+relies on the standard AWS credential chain, including EKS Pod Identity. It
+does not use an OpenAI API key or copy a personal `~/.codex/auth.json` into the
+image. The image also includes `symphony-review-watcher`, a bounded polling
+helper that moves Jira tickets out of Human Review only when the matching pull
+request has a current changes-requested review, an unresolved non-outdated
+review thread, or a new collaborator comment on the current head.
+
+```bash
+docker build --platform linux/arm64 -t symphony:pilot .
+docker run --rm --entrypoint codex symphony:pilot --version
+```
+
 ## Web dashboard
 
 The observability UI now runs on a minimal Phoenix stack:

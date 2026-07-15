@@ -1,0 +1,12 @@
+_build
+cover
+deps
+doc
+log
+logs
+test
+tmp
+.env
+.env.*
+.git
+.DS_Store
