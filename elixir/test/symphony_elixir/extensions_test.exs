@@ -544,6 +544,20 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert_receive {:jira_authorization, "Bearer rotated-token"}
   end
 
+  test "jira adapter omits absent optional Req options" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "jira",
+      tracker_endpoint: "http://127.0.0.1:1",
+      tracker_api_token: "Bearer jira-token",
+      tracker_project_slug: "SD"
+    )
+
+    assert capture_log(fn ->
+             assert {:error, {:jira_api_request, %Req.TransportError{reason: :econnrefused}}} =
+                      JiraAdapter.fetch_candidate_issues()
+           end) =~ "Jira REST request failed"
+  end
+
   test "jira adapter honors retry-after for rate-limited safe reads" do
     request_recipient = self()
     Process.put(:jira_search_attempt, 0)
