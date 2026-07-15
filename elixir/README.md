@@ -161,9 +161,10 @@ Notes:
   - Safe Jira polling reads retry rate limits and transient server failures, honoring numeric
     `Retry-After` headers.
   - Jira dynamic-tool writes are restricted to issue keys in `tracker.project_slug`.
-  - See [`examples/WORKFLOW.jira-atrs.md`](examples/WORKFLOW.jira-atrs.md) for a single-replica
-    ActiveViam pilot workflow using `activeviam/atoti-risk-admin-dashboard` and the `symphony`
-    label gate.
+  - See [`examples/WORKFLOW.jira-atrs.md`](examples/WORKFLOW.jira-atrs.md) and
+    [`examples/WORKFLOW.jira-atrs-reviewer.md`](examples/WORKFLOW.jira-atrs-reviewer.md) for the
+    separate ActiveViam implementation and AI-review workflows using
+    `activeviam/atoti-risk-admin-dashboard` and the `symphony` label gate.
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
   while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the

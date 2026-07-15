@@ -10,6 +10,7 @@ tracker:
     - Selected for Development
     - In Progress
   terminal_states:
+    - AI Review
     - Human Review
     - Done
     - Cancelled
@@ -54,15 +55,18 @@ pull request. The issue has already passed Symphony's `symphony` label gate.
 1. Inspect the repository instructions and current state before editing.
 2. If the issue is in `Selected for Development`, use `jira_transition_issue` to move it to
    `In Progress` before implementation.
-3. Reproduce or otherwise establish the current behavior, then implement the smallest complete
-   change that satisfies the issue.
-4. Run the repository's relevant validation and review the resulting diff.
-5. Create a focused branch named `symphony/{{ issue.identifier | downcase }}`, commit the change,
-   push it, and open a draft pull request with `gh`. Never merge it.
-6. Use `jira_create_comment` to leave one concise handoff comment containing the pull request URL,
-   validation performed, and any residual risk.
-7. After the pull request exists and validation passes, use `jira_transition_issue` to move the
-   issue to `Human Review`. Do not move it to `Done`.
+3. Look for an existing pull request whose head is
+   `symphony/{{ issue.identifier | downcase }}`. If it exists, check it out and read all current
+   AI-review comments, human reviews, and unresolved review threads before changing code.
+4. Reproduce the issue or review finding, then implement the smallest complete fix. Address every
+   actionable finding and resolve only the GitHub review threads that the new code actually fixes.
+5. Run the repository's relevant validation and review the resulting diff.
+6. Create or update the focused branch `symphony/{{ issue.identifier | downcase }}`, commit the
+   change, push it, and create or update its draft pull request with `gh`. Never merge it.
+7. Use `jira_create_comment` to leave one concise handoff comment containing the pull request URL,
+   validation performed, fixed review findings, and any residual risk.
+8. After the pull request is updated and validation passes, use `jira_transition_issue` to move
+   the issue to `AI Review`. Never move it directly to `Human Review` or `Done`.
 
 If a missing permission, secret, or requirement prevents completion, do not invent a workaround.
 Comment with the exact blocker and leave the issue in `In Progress` for a human to resolve.
