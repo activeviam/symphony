@@ -409,14 +409,15 @@ defmodule SymphonyElixir.Jira.Client do
   end
 
   defp default_request(method, path, opts, tracker) do
-    Req.request(
-      method: method,
-      url: jira_api_url(tracker.endpoint, path),
-      headers: Keyword.fetch!(opts, :headers),
-      params: Keyword.get(opts, :params),
-      json: Keyword.get(opts, :json),
-      connect_options: [timeout: 30_000]
-    )
+    request_opts =
+      [
+        method: method,
+        url: jira_api_url(tracker.endpoint, path),
+        headers: Keyword.fetch!(opts, :headers),
+        connect_options: [timeout: 30_000]
+      ] ++ Keyword.take(opts, [:params, :json])
+
+    Req.request(request_opts)
   end
 
   defp jira_headers(tracker) do
