@@ -41,7 +41,9 @@ RUN apk add --no-cache \
     curl \
     git \
     github-cli \
+    jq \
     openssh-client \
+    openssl \
     ripgrep \
     tini \
   && addgroup -g 10001 -S symphony \
@@ -58,9 +60,17 @@ RUN apk add --no-cache \
 COPY --from=codex /opt/codex /opt/codex
 COPY --from=build /build/bin/symphony /usr/local/bin/symphony
 COPY docker/entrypoint.sh /usr/local/bin/symphony-entrypoint
+COPY docker/gh-wrapper.sh /usr/local/bin/gh
+COPY docker/github-app-token.sh /usr/local/bin/github-app-token
+COPY docker/review-watcher.sh /usr/local/bin/symphony-review-watcher
 
 RUN ln -s /opt/codex/bin/codex /usr/local/bin/codex \
-  && chmod 0755 /usr/local/bin/symphony /usr/local/bin/symphony-entrypoint
+  && chmod 0755 \
+    /usr/local/bin/gh \
+    /usr/local/bin/github-app-token \
+    /usr/local/bin/symphony \
+    /usr/local/bin/symphony-entrypoint \
+    /usr/local/bin/symphony-review-watcher
 
 ENV CODEX_HOME=/home/symphony/.codex \
     HOME=/home/symphony \

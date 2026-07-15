@@ -3,8 +3,18 @@ set -euo pipefail
 
 umask 077
 
-if [[ -z "${GH_TOKEN:-}" ]]; then
-  echo "GH_TOKEN is required for the temporary pilot" >&2
+if [[ -z "${GITHUB_APP_ID:-}" ]]; then
+  echo "GITHUB_APP_ID is required" >&2
+  exit 1
+fi
+
+if [[ -z "${GITHUB_APP_INSTALLATION_ID:-}" ]]; then
+  echo "GITHUB_APP_INSTALLATION_ID is required" >&2
+  exit 1
+fi
+
+if [[ ! -s "${GITHUB_APP_PRIVATE_KEY_FILE:-}" ]]; then
+  echo "GitHub App private key file is missing or empty" >&2
   exit 1
 fi
 
@@ -21,6 +31,9 @@ fi
 install -d -m 0700 "${CODEX_HOME}"
 
 gh auth setup-git
+git config --global --unset-all credential.https://github.com.helper || true
+git config --global --add credential.https://github.com.helper ""
+git config --global --add credential.https://github.com.helper "!/usr/local/bin/gh auth git-credential"
 git config --global user.name "ActiveViam Symphony"
 git config --global user.email "symphony@activeviam.com"
 
