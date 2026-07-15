@@ -187,6 +187,24 @@ codex:
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
   `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
 
+## Container image
+
+The production pilot image is built from `elixir/Dockerfile`. It contains the
+Symphony escript, Codex CLI, Git, GitHub CLI, and the tools required by a local
+workspace worker. The runtime is non-root and supports ARM64 and AMD64 through
+the upstream multi-architecture base images.
+
+The temporary pilot entrypoint expects `AWS_REGION` and `GH_TOKEN`, configures
+GitHub HTTPS credentials, and starts the dashboard on port `8080`. The pilot
+workflow selects Codex's built-in `amazon-bedrock` provider and relies on the
+standard AWS credential chain, such as an EKS IRSA role. It does not use an
+OpenAI API key or copy a personal `~/.codex/auth.json` into the image.
+
+```bash
+docker build --platform linux/arm64 -t symphony:pilot .
+docker run --rm --entrypoint codex symphony:pilot --version
+```
+
 ## Web dashboard
 
 The observability UI now runs on a minimal Phoenix stack:
