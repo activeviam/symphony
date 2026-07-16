@@ -234,6 +234,69 @@ Guardrails for the future implementation:
 
 This is a documented future goal only and does not change the current deployment workflow.
 
+## Near-term multi-repository routing decision
+
+Keep one Jira-driven Symphony scheduler and use labels for repository routing during the next
+prototype phase.
+
+- Keep `symphony` as the explicit dispatch opt-in label.
+- Require exactly one allowlisted repository label using the form
+  `symphony-repo-<alias>`, for example `symphony-repo-admin-dashboard`.
+- Resolve aliases through deployment-owned configuration; never accept an arbitrary clone URL or
+  repository name from Jira content.
+- Give the runtime GitHub App access only to the repositories present in that allowlist.
+- Keep one Jira issue scoped to one repository. Represent cross-repository work as linked issues
+  or subtasks rather than allowing one coding run to create unrelated pull requests.
+- Continue using repository-local instructions and CI as the authority for validation.
+
+The repository router and human-review watcher should consume the same allowlist. Unknown,
+missing, duplicated, or changed repository labels must block safely and leave a precise Jira
+comment instead of guessing a target.
+
+This label-based contract is intentionally a prototype choice. A controlled Jira single-select
+field may replace it later without allowing ticket authors to provide arbitrary repository URLs.
+
+## Future goal: agent-planned cross-repository delivery
+
+A later phase may add a planning and coordination agent that determines which allowlisted
+repositories a parent Jira card affects, proposes a dependency-ordered plan, and creates one
+repository-routed subtask per implementation unit.
+
+The target flow is:
+
+~~~text
+parent Jira card enters planning
+  -> planning agent reads the approved repository catalogue
+  -> human approves the proposed repositories and dependency plan
+  -> agent creates and links one subtask per repository
+  -> each subtask follows implementation, AI Review, and Human Review independently
+  -> coordinator collects immutable pull-request commit SHAs
+  -> cross-repository acceptance runs in an isolated integration environment
+  -> success creates a human-reviewed deployment PR in shared-infrastructure
+  -> Argo CD deploys the approved revisions
+  -> post-deployment acceptance completes the parent card
+~~~
+
+Design guardrails for that future work:
+
+- Repository selection remains limited to a centrally maintained catalogue and GitHub App
+  allowlist.
+- Require human plan approval initially; automation may be relaxed only for proven low-risk work.
+- Add narrowly scoped Jira tools for creating subtasks, linking dependencies, and updating
+  approved fields rather than exposing unrestricted Jira credentials to the coding agent.
+- Use Jira states and dependency links as durable coordination state. Do not keep a manager agent
+  running while it waits for child work.
+- Test combined changes by immutable commit SHA, not mutable branch names.
+- Route implementation, AI-review, human-review, integration, or acceptance findings back to the
+  relevant repository subtask.
+- Create deployment changes through a pull request against `activeviam/shared-infrastructure`;
+  never patch Kubernetes resources directly.
+- Keep rollout promotion and production-impacting decisions behind explicit human approval.
+
+This is documented future work only. The next multi-repository implementation should use the
+repository-label routing contract above and should not create subtasks or coordinate deployments
+automatically.
+
 ## Candidate upstream contributions
 
 Contribute these as small, independent changes rather than proposing the complete ActiveViam
@@ -247,13 +310,14 @@ deployment policy upstream:
 | Required-label dispatch gate | Useful generic safety feature for any shared tracker |
 | Token-file reread and retry handling | Generic operational hardening with little policy coupling |
 | Tracker-neutral issue type names | Follow-up refactor after Jira behaviour is accepted |
+| Issue context for workspace hooks | Generic input for safe repository bootstrap without Jira-specific hook logic |
 | Container reference implementation | Offer separately; keep Bedrock, EKS, and ActiveViam defaults out |
 | Dashboard instance/role label | Generic improvement for multiple Symphony instances |
 
 Keep these ActiveViam-owned unless upstream asks for a general abstraction:
 
 - ATRS status names and the symphony label.
-- The atoti-risk-admin-dashboard pilot binding.
+- Repository-label aliases, allowlist policy, and the atoti-risk-admin-dashboard pilot binding.
 - AI Review/Human Review transition policy and review-comment wording.
 - Bedrock model choice, AWS IAM, EKS manifests, internal ingress, and GitOps promotion.
 - The human-review polling CronJob in its current repository-specific form.
