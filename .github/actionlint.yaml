@@ -1,2 +1,2 @@
 config-variables:
-  - SYMPHONY_DEPLOY_APP_ID
+  - SYMPHONY_DEPLOY_CLIENT_ID
