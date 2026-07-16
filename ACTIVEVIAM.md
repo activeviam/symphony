@@ -170,7 +170,7 @@ would expand the trust boundary unnecessarily. The App is installed only on
 activeviam/shared-infrastructure with repository contents and pull-request read/write access. The
 source repository holds:
 
-- Actions variable SYMPHONY_DEPLOY_APP_ID
+- Actions variable SYMPHONY_DEPLOY_CLIENT_ID
 - Actions secret SYMPHONY_DEPLOY_APP_PRIVATE_KEY
 
 This deployment App is intentionally separate from the runtime App mounted in EKS. Giving the
