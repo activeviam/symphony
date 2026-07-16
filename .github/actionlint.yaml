@@ -1,7 +1,2 @@
-self-hosted-runner:
-  labels:
-    - shared-arm64-activeviam
-    - activeviam-shared-arm64-small
-
 config-variables:
   - SYMPHONY_DEPLOY_APP_ID

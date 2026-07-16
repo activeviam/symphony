@@ -21,10 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: symphony
   DEPLOYMENT_REPOSITORY: activeviam/shared-infrastructure
-  DEPLOYMENT_MANIFEST: services/symphony/envs/shared/kustomization.yaml
 
 jobs:
   select-source:
@@ -113,7 +110,7 @@ jobs:
       - name: Re-run the full source gate
         run: make all
 
-  build-image:
+  dispatch-publish:
     if: >-
       ${{
         always() &&
@@ -124,80 +121,11 @@ jobs:
     needs:
       - select-source
       - verify-manual
-    runs-on: shared-arm64-activeviam
-    timeout-minutes: 45
-    outputs:
-      digest: ${{ steps.image.outputs.digest }}
-      image_tag: ${{ steps.image.outputs.image_tag }}
-      registry: ${{ steps.login-ecr.outputs.registry }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
-      - name: Checkout selected source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          ref: ${{ needs.select-source.outputs.source_sha }}
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@517a711dbcd0e402f90c77e7e2f81e849156e31d # v6
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: "333996703325"
-          use-existing-credentials: true
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
-
-      - name: Build or reuse immutable image
-        id: image
-        env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          SOURCE_SHA: ${{ needs.select-source.outputs.source_sha }}
-        run: |
-          set -euo pipefail
-          image_tag="git-${SOURCE_SHA}-arm64"
-          image="${REGISTRY}/${ECR_REPOSITORY}:${image_tag}"
-          describe_image=(
-            aws ecr describe-images
-            --region "$AWS_REGION"
-            --repository-name "$ECR_REPOSITORY"
-            --image-ids "imageTag=${image_tag}"
-            --query 'imageDetails[0].imageDigest'
-            --output text
-          )
-          digest="$("${describe_image[@]}" 2>/dev/null || true)"
-
-          if [[ "$digest" != sha256:* ]]; then
-            docker build --platform linux/arm64 --tag "$image" elixir
-            docker push "$image"
-
-            for _ in {1..12}; do
-              digest="$("${describe_image[@]}" 2>/dev/null || true)"
-              [[ "$digest" == sha256:* ]] && break
-              sleep 5
-            done
-          else
-            echo "Reusing existing immutable image $image"
-          fi
-
-          if [[ "$digest" != sha256:* ]]; then
-            echo "Unable to resolve the ECR digest for $image" >&2
-            exit 1
-          fi
-
-          echo "image_tag=$image_tag" >> "$GITHUB_OUTPUT"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "Published ${REGISTRY}/${ECR_REPOSITORY}@${digest}"
-
-  open-deployment-pr:
-    needs:
-      - select-source
-      - build-image
-    runs-on: activeviam-shared-arm64-small
-    timeout-minutes: 15
-
-    steps:
-      - name: Mint deployment App token
+      - name: Mint dispatcher App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
@@ -206,129 +134,27 @@ jobs:
           owner: activeviam
           repositories: shared-infrastructure
 
-      - name: Checkout deployment repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          repository: ${{ env.DEPLOYMENT_REPOSITORY }}
-          ref: main
-          token: ${{ steps.app-token.outputs.token }}
-          path: deployment
-
-      - name: Ensure GitHub CLI is available
-        run: |
-          set -euo pipefail
-          if command -v gh >/dev/null 2>&1; then
-            gh --version
-            exit 0
-          fi
-
-          version="2.96.0"
-          archive="gh_${version}_linux_arm64.tar.gz"
-          archive_path="${RUNNER_TEMP}/${archive}"
-          curl --fail --silent --show-error --location \
-            "https://github.com/cli/cli/releases/download/v${version}/${archive}" \
-            --output "$archive_path"
-          echo "06f86ec7103d41993b76cd78072f43595c34aaa56506d971d9860e67140bf909  $archive_path" | sha256sum --check -
-          tar --extract --gzip --file "$archive_path" --directory "$RUNNER_TEMP"
-          echo "${RUNNER_TEMP}/gh_${version}_linux_arm64/bin" >> "$GITHUB_PATH"
-
-      - name: Update the pinned image digest
-        id: manifest
-        working-directory: deployment
-        env:
-          DIGEST: ${{ needs.build-image.outputs.digest }}
-        run: |
-          set -euo pipefail
-          manifest="$DEPLOYMENT_MANIFEST"
-          digest_lines="$(grep --count --extended-regexp '^    digest: sha256:[0-9a-f]{64}$' "$manifest" || true)"
-          if [[ "$digest_lines" != "1" ]]; then
-            echo "Expected exactly one pinned Symphony digest in $manifest" >&2
-            exit 1
-          fi
-
-          current_digest="$(sed --silent 's/^    digest: //p' "$manifest")"
-          if [[ "$current_digest" == "$DIGEST" ]]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Shared infrastructure already pins $DIGEST"
-            exit 0
-          fi
-
-          sed --in-place --extended-regexp "s/^    digest: sha256:[0-9a-f]{64}$/    digest: ${DIGEST}/" "$manifest"
-          git diff --check
-
-          changed_files="$(git diff --name-only)"
-          if [[ "$changed_files" != "$manifest" ]]; then
-            echo "Refusing to continue because files outside $manifest changed:" >&2
-            printf '%s\n' "$changed_files" >&2
-            exit 1
-          fi
-
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-
-      - name: Commit and open deployment pull request
-        if: ${{ steps.manifest.outputs.changed == 'true' }}
-        working-directory: deployment
+      - name: Request a private publish
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          DIGEST: ${{ needs.build-image.outputs.digest }}
-          IMAGE_TAG: ${{ needs.build-image.outputs.image_tag }}
-          REGISTRY: ${{ needs.build-image.outputs.registry }}
           SOURCE_SHA: ${{ needs.select-source.outputs.source_sha }}
         run: |
           set -euo pipefail
-          short_sha="${SOURCE_SHA:0:12}"
-          branch="automation/symphony-${short_sha}"
+          payload="${RUNNER_TEMP}/symphony-publish.json"
+          jq --null-input \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg source_repository "$GITHUB_REPOSITORY" \
+            '{
+              event_type: "symphony-publish",
+              client_payload: {
+                source_sha: $source_sha,
+                source_repository: $source_repository
+              }
+            }' > "$payload"
 
-          existing_pr="$(gh pr list \
-            --repo "$DEPLOYMENT_REPOSITORY" \
-            --head "$branch" \
-            --state open \
-            --json url \
-            --jq '.[0].url // ""')"
-          if [[ -n "$existing_pr" ]]; then
-            echo "Deployment pull request already exists: $existing_pr"
-            exit 0
-          fi
+          gh api \
+            --method POST \
+            "repos/${DEPLOYMENT_REPOSITORY}/dispatches" \
+            --input "$payload"
 
-          if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; then
-            branch="${branch}-retry-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          fi
-
-          git config user.name "activeviam-symphony-deployer[bot]"
-          git config user.email "activeviam-symphony-deployer[bot]@users.noreply.github.com"
-          git switch --create "$branch"
-          git add "$DEPLOYMENT_MANIFEST"
-          git commit --message "deploy: Symphony ${short_sha}"
-          git push --set-upstream origin "$branch"
-
-          body_file="${RUNNER_TEMP}/symphony-deployment-pr.md"
-          printf '%s\n' \
-            '## Context' \
-            '' \
-            "Publish tested Symphony source ${SOURCE_SHA} to Shared EKS through GitOps." \
-            '' \
-            '## Change' \
-            '' \
-            "- Source: https://github.com/${GITHUB_REPOSITORY}/commit/${SOURCE_SHA}" \
-            "- Immutable tag: ${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" \
-            "- Pinned image: ${REGISTRY}/${ECR_REPOSITORY}@${DIGEST}" \
-            "- Manifest: ${DEPLOYMENT_MANIFEST}" \
-            '' \
-            '## Validation' \
-            '' \
-            '- The source make-all workflow completed successfully.' \
-            '- Manual dispatches re-run make all before publishing.' \
-            '- The deployment diff is restricted to the Symphony image digest.' \
-            '' \
-            '## Rollout' \
-            '' \
-            'After human review and merge, Argo CD will reconcile the Shared EKS deployment.' \
-            'This automation does not merge the pull request.' \
-            > "$body_file"
-
-          gh pr create \
-            --repo "$DEPLOYMENT_REPOSITORY" \
-            --base main \
-            --head "$branch" \
-            --title "deploy: Symphony ${short_sha}" \
-            --body-file "$body_file"
+          echo "Requested private publish of ${GITHUB_REPOSITORY}@${SOURCE_SHA}"
