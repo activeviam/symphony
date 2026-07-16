@@ -189,6 +189,51 @@ merge source PR
   -> Argo CD reconciles Shared EKS
 ~~~
 
+## Future goal: deployed acceptance lane
+
+The current prototype deliberately keeps a human-reviewed deployment pull request between image
+publication and the human-used Shared EKS environment. Keep that behaviour until a separate,
+isolated acceptance environment is available.
+
+The future target flow is:
+
+~~~text
+merge source PR
+  -> make-all succeeds on main
+  -> private publisher builds or reuses the immutable image
+  -> publisher directly updates an acceptance-only GitOps overlay or branch
+  -> Argo CD reconciles an isolated Symphony acceptance namespace
+  -> an environment-local private ARC runner waits for Synced and Healthy
+  -> deployed acceptance tests run against the acceptance URLs
+  -> success opens a human-reviewed PR promoting the same digest to Shared EKS
+~~~
+
+This makes deployed acceptance automatic after a trusted main-branch push without exposing the
+stable shared instance to every source change. It also preserves Git as the source of truth; the
+workflow must not patch Kubernetes resources directly.
+
+The acceptance suite should verify:
+
+- The worker and reviewer dashboards are reachable and identify their distinct roles.
+- The running workload uses the exact ECR digest selected by the publisher.
+- A disposable ATRS issue labelled symphony completes implementation, AI Review, and Human Review.
+- AI or human findings return the issue to In Progress and the worker resumes it.
+- Test issues and any temporary resources are reliably cleaned up or cancelled.
+
+The existing `make e2e` target exercises upstream Linear/Codex behaviour and is not a substitute
+for this Jira, Bedrock, EKS, ingress, and review-loop acceptance suite.
+
+Guardrails for the future implementation:
+
+- Accept only tested commits on activeviam/symphony main; do not deploy arbitrary public forks.
+- Serialize acceptance deployments so concurrent pushes cannot overwrite each other's test target.
+- Run environment-bound acceptance jobs on a private runner with Shared EKS network reachability.
+- Prevent promotion when acceptance fails and retain enough Git history to identify or revert the
+  failed acceptance deployment.
+- Keep promotion to the human-used Shared EKS environment behind the deployment pull request.
+
+This is a documented future goal only and does not change the current deployment workflow.
+
 ## Candidate upstream contributions
 
 Contribute these as small, independent changes rather than proposing the complete ActiveViam
