@@ -62,6 +62,7 @@ COPY --from=build /build/bin/symphony /usr/local/bin/symphony
 COPY docker/entrypoint.sh /usr/local/bin/symphony-entrypoint
 COPY docker/gh-wrapper.sh /usr/local/bin/gh
 COPY docker/github-app-token.sh /usr/local/bin/github-app-token
+COPY docker/repository-router.sh /usr/local/bin/symphony-repository-router
 COPY docker/review-watcher.sh /usr/local/bin/symphony-review-watcher
 
 RUN ln -s /opt/codex/bin/codex /usr/local/bin/codex \
@@ -70,6 +71,7 @@ RUN ln -s /opt/codex/bin/codex /usr/local/bin/codex \
     /usr/local/bin/github-app-token \
     /usr/local/bin/symphony \
     /usr/local/bin/symphony-entrypoint \
+    /usr/local/bin/symphony-repository-router \
     /usr/local/bin/symphony-review-watcher
 
 ENV CODEX_HOME=/home/symphony/.codex \

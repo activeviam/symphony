@@ -205,10 +205,26 @@ in the pod.
 The pilot workflow selects Codex's built-in `amazon-bedrock` provider and
 relies on the standard AWS credential chain, including EKS Pod Identity. It
 does not use an OpenAI API key or copy a personal `~/.codex/auth.json` into the
-image. The image also includes `symphony-review-watcher`, a bounded polling
-helper that moves Jira tickets out of Human Review only when the matching pull
-request has a current changes-requested review, an unresolved non-outdated
-review thread, or a new collaborator comment on the current head.
+image.
+
+The image includes two ActiveViam deployment helpers:
+
+- `symphony-repository-router` reads the Jira issue key from the workspace
+  name, requires exactly one `symphony-repo-<repository>` label, verifies the
+  resulting repository belongs to `GITHUB_ORGANIZATION` and is accessible to
+  the GitHub App, and clones it into a fresh workspace. Configure it as a
+  `hooks.before_run` command so retries also validate the selected repository.
+- `symphony-review-watcher` queries Jira for Symphony issues in Human Review,
+  resolves each issue through the same repository-label contract, and moves a
+  ticket back to the configured rework state only when its matching pull
+  request has a current changes-requested review, an unresolved non-outdated
+  review thread, or a new collaborator comment on the current head.
+
+Both helpers require `GITHUB_ORGANIZATION`, `JIRA_ENDPOINT`,
+`JIRA_PROJECT_KEY`, and `JIRA_API_TOKEN_FILE`. The repository-label prefix
+defaults to `symphony-repo-`; the watcher opt-in label defaults to `symphony`.
+Repository labels contain names only, never owners or clone URLs, so Jira
+content cannot select a repository outside the configured organization.
 
 ```bash
 docker build --platform linux/arm64 -t symphony:pilot .
