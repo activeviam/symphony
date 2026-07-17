@@ -297,6 +297,49 @@ This is documented future work only. The next multi-repository implementation sh
 repository-label routing contract above and should not create subtasks or coordinate deployments
 automatically.
 
+## Future goal: secure agent conversation viewer
+
+The current Symphony dashboard is an operational status surface. It shows active issues, session
+identifiers, turn counts, token use, retry state, and the latest summarized Codex activity, but it
+does not expose the complete visible agent conversation. The issue-detail API reserves a
+`codex_session_logs` collection, which is currently empty.
+
+A future dashboard enhancement should provide a read-only, issue-scoped conversation view without
+exposing the live Codex app-server transport from EKS.
+
+The target experience is:
+
+~~~text
+operator opens a Jira issue from the Symphony dashboard
+  -> issue page lists implementation and AI-review sessions in chronological order
+  -> each session shows visible prompts, agent messages, commands, tool calls, and results
+  -> Jira transitions, pull-request revisions, and validation evidence are correlated on a timeline
+  -> retained transcripts remain available after the worker pod or workspace is replaced
+~~~
+
+Implementation guidelines:
+
+- Capture normalized visible app-server events in `AgentRunner` rather than parsing an unstable
+  on-disk transcript format.
+- Key records by Jira issue, Codex thread and turn, workflow role, repository, and immutable pull-
+  request commit when available.
+- Persist transcripts outside pod-local `emptyDir` storage with explicit retention and deletion
+  policies.
+- Extend `/api/v1/<issue_identifier>` and add a linked LiveView issue page for transcript browsing.
+- Stream updates to the page while a session is active, but keep the first version read-only.
+- Show user-visible prompts, agent messages, command and tool activity, concise command output, and
+  validation results. Never expose hidden model reasoning.
+- Redact credentials and sensitive environment values before persistence, and cap or separately
+  store large command output.
+- Protect transcript routes with the approved internal authentication and authorization mechanism;
+  source code, diffs, commands, and Jira content must not become anonymously accessible.
+- Record access and retain enough correlation data for operational and compliance investigation.
+- Do not expose a pod's app-server WebSocket or stdio transport through the shared ingress. Any
+  later steering or approval UI requires a separate threat model and explicit authorization.
+
+This is documented future work only. The current dashboard and JSON API remain operational status
+surfaces and do not provide a second interactive Codex UI.
+
 ## Candidate upstream contributions
 
 Contribute these as small, independent changes rather than proposing the complete ActiveViam
@@ -311,6 +354,7 @@ deployment policy upstream:
 | Token-file reread and retry handling | Generic operational hardening with little policy coupling |
 | Tracker-neutral issue type names | Follow-up refactor after Jira behaviour is accepted |
 | Issue context for workspace hooks | Generic input for safe repository bootstrap without Jira-specific hook logic |
+| Read-only session transcript projection | Generic dashboard/API enhancement using visible app-server events |
 | Container reference implementation | Offer separately; keep Bedrock, EKS, and ActiveViam defaults out |
 | Dashboard instance/role label | Generic improvement for multiple Symphony instances |
 
