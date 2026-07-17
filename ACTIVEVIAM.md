@@ -236,22 +236,23 @@ This is a documented future goal only and does not change the current deployment
 
 ## Near-term multi-repository routing decision
 
-Keep one Jira-driven Symphony scheduler and use labels for repository routing during the next
-prototype phase.
+Keep one Jira-driven Symphony scheduler and use labels for repository routing. Repository access
+is organization-scoped rather than maintained as a second static allowlist.
 
 - Keep `symphony` as the explicit dispatch opt-in label.
-- Require exactly one allowlisted repository label using the form
-  `symphony-repo-<alias>`, for example `symphony-repo-admin-dashboard`.
-- Resolve aliases through deployment-owned configuration; never accept an arbitrary clone URL or
-  repository name from Jira content.
-- Give the runtime GitHub App access only to the repositories present in that allowlist.
+- Require exactly one repository label using the exact repository name in the form
+  `symphony-repo-<repository>`, for example `symphony-repo-atoti-risk-admin-dashboard`.
+- Always prepend the deployment-owned `activeviam` organization. Never accept an owner, arbitrary
+  clone URL, or repository URL from Jira content.
+- Install the runtime GitHub App for all repositories in the ActiveViam organization. The App
+  installation is the effective access boundary, including for repositories created later.
 - Keep one Jira issue scoped to one repository. Represent cross-repository work as linked issues
   or subtasks rather than allowing one coding run to create unrelated pull requests.
 - Continue using repository-local instructions and CI as the authority for validation.
 
-The repository router and human-review watcher should consume the same allowlist. Unknown,
-missing, duplicated, or changed repository labels must block safely and leave a precise Jira
-comment instead of guessing a target.
+The repository router and human-review watcher consume the same label contract. Unknown,
+inaccessible, missing, duplicated, or changed repository labels block safely instead of guessing
+a target. The workspace router adds a deduplicated Jira comment when it cannot resolve a target.
 
 This label-based contract is intentionally a prototype choice. A controlled Jira single-select
 field may replace it later without allowing ticket authors to provide arbitrary repository URLs.
@@ -279,8 +280,8 @@ parent Jira card enters planning
 
 Design guardrails for that future work:
 
-- Repository selection remains limited to a centrally maintained catalogue and GitHub App
-  allowlist.
+- Repository selection remains limited to repositories in the configured organization that the
+  GitHub App installation can access.
 - Require human plan approval initially; automation may be relaxed only for proven low-risk work.
 - Add narrowly scoped Jira tools for creating subtasks, linking dependencies, and updating
   approved fields rather than exposing unrestricted Jira credentials to the coding agent.
@@ -361,10 +362,10 @@ deployment policy upstream:
 Keep these ActiveViam-owned unless upstream asks for a general abstraction:
 
 - ATRS status names and the symphony label.
-- Repository-label aliases, allowlist policy, and the atoti-risk-admin-dashboard pilot binding.
+- ActiveViam repository-label policy, organization boundary, and Jira routing-failure comments.
 - AI Review/Human Review transition policy and review-comment wording.
 - Bedrock model choice, AWS IAM, EKS manifests, internal ingress, and GitOps promotion.
-- The human-review polling CronJob in its current repository-specific form.
+- The Jira-policy-specific human-review polling CronJob.
 
 ## Known gaps before broader use
 
