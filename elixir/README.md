@@ -158,6 +158,9 @@ Notes:
   - Symphony reads and upserts a durable claim lease marker in issue comments before dispatching.
     When the marker comment already exists, Jira comment edit APIs are used instead of appending
     repeated heartbeat comments.
+  - Jira issue comments are available to workflow prompts as `issue.comments` in oldest-to-newest
+    order. Each entry includes `author`, `body`, and `created_at`; internal claim-lease marker
+    comments are excluded. This lets a resumed issue consume human guidance from Jira.
   - Safe Jira polling reads retry rate limits and transient server failures, honoring numeric
     `Retry-After` headers.
   - Jira dynamic-tool writes are restricted to issue keys in `tracker.project_slug`.

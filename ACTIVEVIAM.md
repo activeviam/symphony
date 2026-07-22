@@ -76,6 +76,8 @@ directly: change services/symphony in activeviam/shared-infrastructure and let A
 - Required-label dispatch gating for a board shared with humans.
 - Durable claim leases stored in Jira comments, including lease renewal and takeover protection.
 - Project-scoped Jira comment and transition tools exposed to Codex.
+- Jira comments included in agent prompt context, excluding internal claim-lease markers, so a
+  blocked issue can consume human guidance when it is returned to Selected for Development.
 - Retry and rate-limit handling for safe Jira reads.
 - A mounted Jira OAuth token file that is reread on every request so token rotation does not
   require a pod restart.
@@ -364,6 +366,7 @@ Keep these ActiveViam-owned unless upstream asks for a general abstraction:
 - ATRS status names and the symphony label.
 - ActiveViam repository-label policy, organization boundary, and Jira routing-failure comments.
 - AI Review/Human Review transition policy and review-comment wording.
+- The ATRS `Blocked` state, its human-resumption policy, and Jira board column placement.
 - Bedrock model choice, AWS IAM, EKS manifests, internal ingress, and GitOps promotion.
 - The Jira-policy-specific human-review polling CronJob.
 
