@@ -15,6 +15,7 @@ defmodule SymphonyElixir.Linear.Issue do
     :assignee_id,
     :claim_lease,
     blocked_by: [],
+    comments: [],
     labels: [],
     assigned_to_worker: true,
     created_at: nil,
@@ -32,6 +33,13 @@ defmodule SymphonyElixir.Linear.Issue do
           url: String.t() | nil,
           assignee_id: String.t() | nil,
           claim_lease: term(),
+          comments: [
+            %{
+              body: String.t(),
+              author: String.t() | nil,
+              created_at: DateTime.t() | nil
+            }
+          ],
           labels: [String.t()],
           assigned_to_worker: boolean(),
           created_at: DateTime.t() | nil,

@@ -1087,6 +1087,30 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "updated=2026-02-26T18:07:03Z"
   end
 
+  test "prompt builder renders tracker comments as structured issue context" do
+    workflow_prompt = """
+    {% for comment in issue.comments %}
+    {{ comment.created_at }} | {{ comment.author }}: {{ comment.body }}
+    {% endfor %}
+    """
+
+    write_workflow_file!(Workflow.workflow_file_path(), prompt: workflow_prompt)
+
+    issue = %Issue{
+      identifier: "ATRS-1",
+      comments: [
+        %{
+          author: "Human Reviewer",
+          body: "Use the existing endpoint VPC.",
+          created_at: ~U[2026-07-22 09:30:00Z]
+        }
+      ]
+    }
+
+    assert PromptBuilder.build_prompt(issue) =~
+             "2026-07-22T09:30:00Z | Human Reviewer: Use the existing endpoint VPC."
+  end
+
   test "prompt builder normalizes nested date-like values, maps, and structs in issue fields" do
     write_workflow_file!(Workflow.workflow_file_path(), prompt: "Ticket {{ issue.identifier }}")
 

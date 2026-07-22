@@ -10,6 +10,7 @@ defmodule SymphonyElixir.Jira.Client do
 
   @issue_page_size 50
   @comment_page_size 100
+  @max_prompt_comments 50
   @issue_fields ~w(summary description priority status labels assignee created updated)
   @max_error_body_log_bytes 1_000
   @max_safe_request_retries 3
@@ -199,6 +200,7 @@ defmodule SymphonyElixir.Jira.Client do
       labels: extract_labels(fields),
       assigned_to_worker: true,
       claim_lease: ClaimLease.find(comments),
+      comments: prompt_comments(comments),
       created_at: parse_datetime(fields["created"]),
       updated_at: parse_datetime(fields["updated"])
     }
@@ -246,11 +248,23 @@ defmodule SymphonyElixir.Jira.Client do
   defp decode_comment_page(%{"errorMessages" => errors}), do: {:error, {:jira_errors, errors}}
   defp decode_comment_page(_body), do: {:error, :jira_unknown_payload}
 
-  defp normalize_comment(%{"id" => id, "body" => body}) do
-    %{id: normalize_string(id), body: adf_to_text(body)}
+  defp normalize_comment(%{"id" => id, "body" => body} = comment) do
+    %{
+      id: normalize_string(id),
+      body: normalize_string(adf_to_text(body)) || "",
+      author: normalize_string(get_in(comment, ["author", "displayName"])),
+      created_at: parse_datetime(comment["created"])
+    }
   end
 
   defp normalize_comment(_comment), do: nil
+
+  defp prompt_comments(comments) when is_list(comments) do
+    comments
+    |> Enum.reject(&(ClaimLease.from_comment(&1) != nil or normalize_string(&1.body) == nil))
+    |> Enum.take(-@max_prompt_comments)
+    |> Enum.map(&Map.take(&1, [:author, :body, :created_at]))
+  end
 
   defp fetch_transitions(issue_id) do
     case request_json(:get, "/issue/#{url_path_token(issue_id)}/transitions", retry: true) do

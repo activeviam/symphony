@@ -10,6 +10,7 @@ tracker:
     - Selected for Development
     - In Progress
   terminal_states:
+    - Blocked
     - AI Review
     - Human Review
     - Done
@@ -49,6 +50,13 @@ URL: {{ issue.url }}
 No description was provided.
 {% endif %}
 
+{% if issue.comments != empty %}
+Jira comments (oldest to newest):
+{% for comment in issue.comments %}
+- {{ comment.created_at }} — {{ comment.author }}: {{ comment.body }}
+{% endfor %}
+{% endif %}
+
 This is an unattended prototype run. Work only in the provided repository copy and never merge a
 pull request. The issue has already passed Symphony's `symphony` label gate.
 
@@ -68,5 +76,8 @@ pull request. The issue has already passed Symphony's `symphony` label gate.
 8. After the pull request is updated and validation passes, use `jira_transition_issue` to move
    the issue to `AI Review`. Never move it directly to `Human Review` or `Done`.
 
-If a missing permission, secret, or requirement prevents completion, do not invent a workaround.
-Comment with the exact blocker and leave the issue in `In Progress` for a human to resolve.
+If a missing permission, secret, external dependency, or human decision prevents completion, do
+not invent a workaround or repeatedly retry it. Leave one precise Jira comment describing what is
+blocked, its impact, and the human action needed, then move the issue to `Blocked`. When a human
+returns it to `Selected for Development`, read and apply the newest Jira guidance before doing any
+new work.

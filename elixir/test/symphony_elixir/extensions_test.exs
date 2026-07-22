@@ -431,10 +431,18 @@ defmodule SymphonyElixir.ExtensionsTest do
          %{
            status: 200,
            body: %{
-             "comments" => [%{"id" => "comment-1", "body" => jira_marker_adf(marker_body)}],
+             "comments" => [
+               %{
+                 "id" => "comment-human",
+                 "author" => %{"displayName" => "Human Reviewer"},
+                 "created" => "2026-05-29T17:55:00Z",
+                 "body" => jira_text_adf("Use the approved VPC endpoint instead.")
+               },
+               %{"id" => "comment-1", "body" => jira_marker_adf(marker_body)}
+             ],
              "startAt" => 0,
              "maxResults" => 100,
-             "total" => 1
+             "total" => 2
            }
          }}
     end)
@@ -454,6 +462,14 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert issue.claim_lease.comment_id == "comment-1"
     assert issue.claim_lease.holder == "remote-holder"
     assert issue.claim_lease.expires_at == marker_expires_at
+
+    assert issue.comments == [
+             %{
+               author: "Human Reviewer",
+               body: "Use the approved VPC endpoint instead.",
+               created_at: ~U[2026-05-29 17:55:00Z]
+             }
+           ]
 
     assert_receive {:jira_request, :post, "/search/jql", search_opts}
     assert search_opts[:json]["jql"] =~ ~s(project = "SD")
@@ -1140,6 +1156,19 @@ defmodule SymphonyElixir.ExtensionsTest do
           "type" => "codeBlock",
           "attrs" => %{"language" => "json"},
           "content" => [%{"type" => "text", "text" => marker_body}]
+        }
+      ]
+    }
+  end
+
+  defp jira_text_adf(body) do
+    %{
+      "type" => "doc",
+      "version" => 1,
+      "content" => [
+        %{
+          "type" => "paragraph",
+          "content" => [%{"type" => "text", "text" => body}]
         }
       ]
     }
