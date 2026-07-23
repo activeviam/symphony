@@ -189,7 +189,9 @@ codex:
 - If a later reload fails, Symphony keeps running with the last known good workflow and logs the
   reload error until the file is fixed.
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
-  `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
+  `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`. `GET /healthz`
+  provides an orchestrator-independent process health check for load balancers and container
+  probes; it does not wait for tracker polling or runtime snapshots.
 
 ## Container image
 
