@@ -1588,6 +1588,15 @@ API design notes:
 - If the dashboard is a client-side app, it SHOULD consume this API rather than duplicating state
   logic.
 
+#### 13.7.3 Process Health (`/healthz`)
+
+- `GET /healthz` SHOULD return `200 OK` when the HTTP process can serve requests.
+- The endpoint MUST NOT wait for tracker calls, orchestrator snapshots, worker state, or other
+  external dependencies, so it remains suitable for container and load-balancer health checks.
+- A successful response indicates process health only; operators SHOULD use `/api/v1/state` for
+  runtime capacity, tracker, and worker diagnostics.
+- Unsupported methods SHOULD return `405 Method Not Allowed`.
+
 ## 14. Failure Model and Recovery Strategy
 
 ### 14.1 Failure Classes
