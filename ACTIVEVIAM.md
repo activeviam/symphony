@@ -7,6 +7,21 @@ The source, GitOps manifests, and GitHub history were rechecked on 2026-09-04. T
 verification recorded in this project was 2026-07-23; treat every runtime statement below as a
 verified historical baseline and recheck the live environment before acting.
 
+## Retirement — 7 November 2026
+
+Michael requested removal of the Shared Symphony pilot, not migration. The
+publication dispatcher is archived under `deploy/retired`, outside GitHub's
+active workflow directory. Source CI remains enabled. Merge this change before
+[shared-infrastructure PR 43](https://github.com/activeviam/shared-infrastructure/pull/43),
+which removes the private publisher, deployed workload and legacy runners.
+This source change alone does not remove the running service.
+
+Source code, historical manifests, images and credentials remain available for
+reviewed recovery. Credential revocation needs a separate ownership check.
+The following guide is historical recovery context; its former roadmap and
+restart instructions are superseded. Do not reactivate the pilot without a new
+reviewed decision.
+
 ## Starting point and repository state
 
 - Upstream: [openai/symphony](https://github.com/openai/symphony)
@@ -460,7 +475,7 @@ Keep these ActiveViam-owned unless upstream asks for a general abstraction:
 - Assess the now-significant upstream divergence, define a regular sync cadence, and keep
   upstreamable commits isolated.
 
-## Recommended next task
+## Historical next-task guidance (superseded by retirement)
 
 Start with a read-only audit because the repository has been idle since July:
 
@@ -477,9 +492,9 @@ Start with a read-only audit because the repository has been idle since July:
    workspaces/operational hardening, or the secure transcript viewer. The dashboard role/state
    indicator is the smallest useful UI follow-up.
 
-Any source commit on `main`, including documentation-only commits, can trigger the tested-image
-publisher and create a new digest-only pull request in `activeviam/shared-infrastructure`. Review
-that generated PR, but do not merge or deploy it merely because this guide changed.
+Before retirement, main commits could trigger publication and open digest PRs.
+The archived dispatcher no longer does so after this retirement change is merged.
+Do not merge older generated deployment PRs after retirement.
 
 A useful opening prompt for a new Codex task is:
 
